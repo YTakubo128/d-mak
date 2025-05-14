@@ -3,6 +3,8 @@
 ## これ何なんすか
 GoogleのMediaPipeを利用して手の形を認識して対応したSwitchbot製の製品を制御するようなものです。
 
+AmazonAlexaとかに話しかけることが億劫な時に便利です
+
 WebカメラとSwitchbotハブがあれば動きました。
 
 ## なんとなくの動き
