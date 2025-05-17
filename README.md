@@ -19,4 +19,6 @@ WebカメラとSwitchbotハブ(+αでSwitchbot製の製品)があれば動くよ
  
 　・カメラが複数台ある
  
-     この場合はd-mak.pyのcap = cv2.VideoCapture(0)をいじってください
+     この場合は
+     d-mak.pyのcap = cv2.VideoCapture(0)
+     をいじってください
