@@ -5,7 +5,8 @@ GoogleのMediaPipeを利用して手の形を認識して対応したSwitchbot�
 
 AmazonAlexaとかに話しかけることが億劫な時に便利です
 
-WebカメラとSwitchbotハブがあれば動きました。
+WebカメラとSwitchbotハブ(+αでSwitchbot製の製品)があれば動くようにしています。
+
 
 ## なんとなくの動き
 対応している手の形は指の開いている閉じているをbool値で管理しているため、それに対応している形であれば認識してくれます。
