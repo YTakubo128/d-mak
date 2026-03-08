@@ -12,7 +12,29 @@ switchbot:
   token: "YOUR_API_TOKEN_HERE"          # SwitchBot APIトークン
   secret: "YOUR_API_SECRET_HERE"        # SwitchBot シークレットキー
 
+# 追加可能なデバイス一覧
+# key: gesture_actions から参照する識別子
+devices:
+  - key: light_main
+    id: "YOUR_DEVICE_ID_1"
+    name: "Main Light"
+    type: "plug-mini"
+    enabled: true
+  - key: fan_room
+    id: "YOUR_DEVICE_ID_2"
+    name: "Room Fan"
+    type: "plug-mini"
+    enabled: true
+
+# ジェスチャIDごとの実行対象デバイス（複数指定可）
+# 1: パー, 2: グー, 3: ワン
+gesture_actions:
+  "1": ["light_main"]
+  "2": ["fan_room"]
+  "3": ["light_main", "fan_room"]
+
 # 使用方法:
 # 1. このファイルを複製して config.yaml として保存
 # 2. YOUR_API_TOKEN_HERE と YOUR_API_SECRET_HERE を実際の値で置き換え
-# 3. カメラやジェスチャ設定を必要に応じて調整
+# 3. devices に使用デバイスを追加し、gesture_actions でジェスチャに割り当て
+# 4. カメラやジェスチャ設定を必要に応じて調整

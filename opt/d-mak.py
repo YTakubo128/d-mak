@@ -1,6 +1,7 @@
 import cv2
 import yaml
 import logging
+from typing import Dict, List
 from hand_gesture import HandGestureDetector
 from performance_utils import GestureHandler, AsyncExecutor
 from d_mak_execute import SwitchBotController, load_config
@@ -66,14 +67,90 @@ class HandGestureApp:
         self.cap = cv2.VideoCapture(self.camera_device)
         self._setup_camera()
         
-        # ジェスチャマッピング（例）
-        self.gesture_map = {
-            1: ("パー", "device-id-1"),  # パー → デバイス1
-            2: ("グー", "device-id-2"),  # グー → デバイス2
-            3: ("ワン", "device-id-3"),  # ワン → デバイス3
-        }
+        # デバイス設定をロード（gesture_actionsで参照できるようキーを作成）
+        self.device_lookup = self._build_device_lookup()
+
+        # ジェスチャごとの実行対象デバイス一覧をロード
+        self.gesture_actions = self._build_gesture_actions()
         
         logger.info("HandGestureApp initialized")
+
+    def _build_device_lookup(self) -> Dict[str, dict]:
+        """config.yaml の devices セクションからデバイス参照辞書を作成"""
+        lookup: Dict[str, dict] = {}
+        devices = self.config.get('devices', [])
+
+        for idx, device in enumerate(devices):
+            if not isinstance(device, dict):
+                logger.warning(f"devices[{idx}] is not an object. Skipped.")
+                continue
+
+            device_id = device.get('id')
+            if not device_id:
+                logger.warning(f"devices[{idx}] has no id. Skipped.")
+                continue
+
+            if device.get('enabled', True) is False:
+                continue
+
+            key = str(device.get('key', device_id))
+            lookup[key] = {
+                'id': device_id,
+                'name': device.get('name', key),
+                'type': device.get('type', 'unknown')
+            }
+
+        return lookup
+
+    def _build_gesture_actions(self) -> Dict[int, dict]:
+        """config.yaml の gesture_actions を読み込み、ジェスチャ実行設定を構築"""
+        gesture_name_map = {1: "パー", 2: "グー", 3: "ワン"}
+        actions: Dict[int, dict] = {}
+        raw_actions = self.config.get('gesture_actions', {})
+
+        for raw_gesture_id, device_keys in raw_actions.items():
+            try:
+                gesture_id = int(raw_gesture_id)
+            except (TypeError, ValueError):
+                logger.warning(f"Invalid gesture id in gesture_actions: {raw_gesture_id}")
+                continue
+
+            if not isinstance(device_keys, list):
+                logger.warning(f"gesture_actions[{raw_gesture_id}] must be a list")
+                continue
+
+            targets = []
+            for key in device_keys:
+                device = self.device_lookup.get(str(key))
+                if not device:
+                    logger.warning(f"Unknown device key in gesture_actions[{raw_gesture_id}]: {key}")
+                    continue
+                targets.append(device)
+
+            if targets:
+                actions[gesture_id] = {
+                    'name': gesture_name_map.get(gesture_id, f"Gesture-{gesture_id}"),
+                    'targets': targets
+                }
+
+        # 後方互換: gesture_actions が未設定の場合は従来の固定マッピングを使用
+        if not actions:
+            actions = {
+                1: {
+                    'name': 'パー',
+                    'targets': [{'id': 'device-id-1', 'name': 'default-1', 'type': 'unknown'}]
+                },
+                2: {
+                    'name': 'グー',
+                    'targets': [{'id': 'device-id-2', 'name': 'default-2', 'type': 'unknown'}]
+                },
+                3: {
+                    'name': 'ワン',
+                    'targets': [{'id': 'device-id-3', 'name': 'default-3', 'type': 'unknown'}]
+                },
+            }
+
+        return actions
     
     def _setup_camera(self):
         """カメラをセットアップ"""
@@ -105,17 +182,21 @@ class HandGestureApp:
     
     def handle_gesture(self, gesture_id: int):
         """ジェスチャに対応したアクションを実行"""
-        if gesture_id not in self.gesture_map or not self.controller:
+        if gesture_id not in self.gesture_actions or not self.controller:
             return
         
-        gesture_name, device_id = self.gesture_map[gesture_id]
-        logger.info(f"Gesture detected: {gesture_name} (ID: {gesture_id})")
-        
-        # 非同期で実行
-        self.executor.execute_async(
-            self.controller.toggle_device,
-            device_id
-        )
+        action = self.gesture_actions[gesture_id]
+        gesture_name = action['name']
+        targets: List[dict] = action['targets']
+
+        logger.info(f"Gesture detected: {gesture_name} (ID: {gesture_id}) -> {len(targets)} target(s)")
+
+        # 1ジェスチャで複数デバイスを非同期実行
+        for target in targets:
+            device_id = target['id']
+            device_name = target.get('name', device_id)
+            logger.info(f"Trigger device: {device_name} ({device_id})")
+            self.executor.execute_async(self.controller.toggle_device, device_id)
     
     def run(self):
         """メインループを実行"""
