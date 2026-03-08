@@ -4,6 +4,9 @@ import logging
 from hand_gesture import HandGestureDetector
 from performance_utils import GestureHandler, AsyncExecutor
 from d_mak_execute import SwitchBotController, load_config
+from logger_config import LoggerConfig
+from memory_manager import MemoryManager
+from error_handler import ErrorHandler
 
 
 # ログ設定
@@ -24,6 +27,16 @@ class HandGestureApp:
         """
         # 設定を読み込み
         self.config = load_config(config_path)
+        
+        # ロギング設定
+        global logger
+        logger = LoggerConfig.get_logger("d-mak", self.config)
+        
+        # メモリマネージャーを初期化
+        self.memory_manager = MemoryManager(self.config, logger)
+        
+        # エラーハンドラーを初期化
+        self.error_handler = ErrorHandler(self.config, logger)
         
         # カメラ設定
         camera_config = self.config.get('camera', {})
@@ -47,7 +60,7 @@ class HandGestureApp:
         self.gesture_detector = HandGestureDetector(detection_confidence)
         self.gesture_handler = GestureHandler(confirmation_frames, cooldown_seconds)
         self.executor = AsyncExecutor()
-        self.controller = SwitchBotController(self.token, self.secret) if self.token and self.secret else None
+        self.controller = SwitchBotController(self.token, self.secret, self.config, logger) if self.token and self.secret else None
         
         # カメラを初期化
         self.cap = cv2.VideoCapture(self.camera_device)
@@ -114,62 +127,97 @@ class HandGestureApp:
             while self.cap.isOpened():
                 ret, frame = self.cap.read()
                 if not ret:
+                    logger.warning("Failed to read frame")
+                    self.error_handler.handle_camera_error(Exception("Frame read failed"))
                     break
                 
                 frame_count += 1
                 
-                # ジェスチャを認識
-                raw_gesture = self.gesture_detector.detect_pose(frame)
+                try:
+                    # ジェスチャを認識
+                    raw_gesture = self.gesture_detector.detect_pose(frame)
+                    self.error_handler.reset_camera_error_count()  # エラーカウンタをリセット
+                    
+                    # ジェスチャを更新・確定を判定
+                    confirmed_gesture = self.gesture_handler.update_gesture(raw_gesture)
+                    
+                    # 確定したジェスチャがある場合
+                    if confirmed_gesture is not None:
+                        # クールダウンを確認して実行
+                        if self.gesture_handler.can_execute(confirmed_gesture):
+                            self.handle_gesture(confirmed_gesture)
+                            self.gesture_handler.reset_buffer()
+                        else:
+                            logger.debug(f"Gesture {confirmed_gesture} is on cooldown")
+                    
+                    # ランドマークを描画（デバッグ用）
+                    frame_with_landmarks = self.gesture_detector.visualize_landmarks(frame, draw=True)
+                    
+                    # フレーム情報を表示
+                    gesture_name_map = {0: "None", 1: "Paper", 2: "Fist", 3: "One"}
+                    gesture_display = gesture_name_map.get(raw_gesture, "Unknown")
+                    confirmed_display = gesture_name_map.get(confirmed_gesture, "None") if confirmed_gesture else "None"
+                    
+                    cv2.putText(
+                        frame_with_landmarks,
+                        f"Current: {gesture_display} | Confirmed: {confirmed_display}",
+                        (10, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.7,
+                        (255, 255, 255),
+                        2
+                    )
+                    cv2.putText(
+                        frame_with_landmarks,
+                        f"Frame: {frame_count} | Buffer: {len(self.gesture_handler.gesture_buffer)}/{self.gesture_handler.confirmation_frames}",
+                        (10, 70),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.7,
+                        (255, 255, 255),
+                        2
+                    )
+                    
+                    # メモリ使用量を表示
+                    mem_mb = self.memory_manager.get_memory_usage_mb()
+                    cv2.putText(
+                        frame_with_landmarks,
+                        f"Memory: {mem_mb:.1f}MB",
+                        (10, 110),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.7,
+                        (255, 255, 255),
+                        2
+                    )
+                    
+                    # フレーム表示
+                    cv2.imshow('Hand Gesture Control', frame_with_landmarks)
+                    
+                    # メモリクリーンアップが必要か確認
+                    if self.memory_manager.should_cleanup():
+                        self.memory_manager.cleanup()
+                    
+                    # 定期的なパフォーマンスログ
+                    if frame_count % 300 == 0:  # 300フレームごと
+                        mem_stats = self.memory_manager.get_memory_stats()
+                        error_stats = self.error_handler.get_error_stats()
+                        logger.info(f"Stats - Frame: {frame_count}, Memory: {mem_stats.get('process_rss_mb', 0):.1f}MB, Errors: {error_stats['total_errors']}")
+                    
+                    # 'q'キーで終了
+                    if cv2.waitKey(1) & 0xFF == ord('q'):
+                        logger.info("Exiting by user request...")
+                        break
                 
-                # ジェスチャを更新・確定を判定
-                confirmed_gesture = self.gesture_handler.update_gesture(raw_gesture)
-                
-                # 確定したジェスチャがある場合
-                if confirmed_gesture is not None:
-                    # クールダウンを確認して実行
-                    if self.gesture_handler.can_execute(confirmed_gesture):
-                        self.handle_gesture(confirmed_gesture)
-                        self.gesture_handler.reset_buffer()
-                    else:
-                        logger.debug(f"Gesture {confirmed_gesture} is on cooldown")
-                
-                # ランドマークを描画（デバッグ用）
-                frame_with_landmarks = self.gesture_detector.visualize_landmarks(frame, draw=True)
-                
-                # フレーム情報を表示
-                gesture_name_map = {0: "None", 1: "Paper", 2: "Fist", 3: "One"}
-                gesture_display = gesture_name_map.get(raw_gesture, "Unknown")
-                confirmed_display = gesture_name_map.get(confirmed_gesture, "None") if confirmed_gesture else "None"
-                
-                cv2.putText(
-                    frame_with_landmarks,
-                    f"Current: {gesture_display} | Confirmed: {confirmed_display}",
-                    (10, 30),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.7,
-                    (255, 255, 255),
-                    2
-                )
-                cv2.putText(
-                    frame_with_landmarks,
-                    f"Frame: {frame_count} | Buffer: {len(self.gesture_handler.gesture_buffer)}/{self.gesture_handler.confirmation_frames}",
-                    (10, 70),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.7,
-                    (255, 255, 255),
-                    2
-                )
-                
-                # フレーム表示
-                cv2.imshow('Hand Gesture Control', frame_with_landmarks)
-                
-                # 'q'キーで終了
-                if cv2.waitKey(1) & 0xFF == ord('q'):
-                    logger.info("Exiting...")
-                    break
+                except Exception as e:
+                    logger.error(f"Error in main loop frame {frame_count}: {e}")
+                    self.error_handler.handle_camera_error(e)
+                    if self.error_handler.consecutive_camera_errors >= self.error_handler.max_consecutive_errors:
+                        logger.critical("Too many consecutive errors. Exiting.")
+                        break
         
         except KeyboardInterrupt:
             logger.info("Interrupted by user")
+        except Exception as e:
+            logger.critical(f"Critical error in run loop: {e}")
         finally:
             self.cleanup()
     
@@ -177,6 +225,16 @@ class HandGestureApp:
         """終了処理"""
         self.cap.release()
         cv2.destroyAllWindows()
+        
+        # 最終統計を出力
+        mem_stats = self.memory_manager.get_memory_stats()
+        error_stats = self.error_handler.get_error_stats()
+        
+        logger.info("Final Statistics:")
+        logger.info(f"  Memory: {mem_stats.get('process_rss_mb', 0):.1f}MB")
+        logger.info(f"  Total Errors: {error_stats['total_errors']}")
+        logger.info(f"  Camera Errors: {error_stats['consecutive_camera_errors']}")
+        logger.info(f"  API Errors: {error_stats['consecutive_api_errors']}")
         logger.info("Cleanup complete")
 
 
