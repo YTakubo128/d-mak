@@ -68,15 +68,27 @@ class HandGestureApp:
             logger.error("カメラが開けません")
             return
         
-        # 解像度を設定
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.camera_width)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.camera_height)
-        self.cap.set(cv2.CAP_PROP_FPS, self.camera_fps)
+        # 解像度を設定（タイムアウト付き）
+        try:
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.camera_width)
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.camera_height)
+            self.cap.set(cv2.CAP_PROP_FPS, self.camera_fps)
+        except Exception as e:
+            logger.warning(f"Camera resolution setup failed: {e}")
         
         # バッファサイズを1に設定（最新フレームのみ保持）
-        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        try:
+            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        except Exception as e:
+            logger.warning(f"Buffer size setup failed: {e}")
         
-        logger.info(f"Camera setup: {self.camera_width}x{self.camera_height} @ {self.camera_fps}fps")
+        # 実際に設定された解像度を取得
+        actual_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        actual_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        actual_fps = int(self.cap.get(cv2.CAP_PROP_FPS))
+        
+        logger.info(f"Camera setup: Requested {self.camera_width}x{self.camera_height} @ {self.camera_fps}fps")
+        logger.info(f"Camera setup: Actual {actual_width}x{actual_height} @ {actual_fps}fps")
     
     def handle_gesture(self, gesture_id: int):
         """ジェスチャに対応したアクションを実行"""
