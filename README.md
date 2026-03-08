@@ -1,26 +1,48 @@
 # d-mak
 
-## これ何なんすか
-GoogleのMediaPipeを利用して手の形を認識して対応したSwitchbot製の製品を制御するようなものです。
+MediaPipeで手のジェスチャを認識し、SwitchBotデバイスを操作するアプリです。
 
-AmazonAlexaとかに話しかけることが億劫な時に便利です
+## 必要なもの
+- Webカメラ
+- SwitchBot Hub
+- 操作対象のSwitchBotデバイス
+- SwitchBot APIトークン/シークレット
 
-WebカメラとSwitchbotハブ(+αでSwitchbot製の製品)があれば動くようにしています。
+## 現在の動作仕様
+- `OKサイン` を起動トリガーとして使います。
+- OKサインを認識すると、`ok_sign_timeout_seconds`（デフォルト7秒）の受付時間が開始されます。
+- 受付時間内に `パー / グー / ワン` のいずれかを認識すると、`gesture_actions` に従って実行します。
+- 1回実行したら受付は終了します。
 
-## なんとなくの動き
-対応している手の形は指の開いている閉じているをbool値で管理しているため、それに対応している形であれば認識してくれます。
+## 設定ファイル
+`opt/config.yaml` の `gesture` セクションで次を調整できます。
 
-## 考えられる不具合
-フロントエンド等に関しては課題が残りまくりなので要改善です。(ごめんなさい)
+```yaml
+gesture:
+     confirmation_frames: 10
+     cooldown_seconds: 5
+     detection_confidence: 0.5
+     ok_sign_timeout_seconds: 7
+     ok_sign_threshold_frames: 3
+     ok_sign_distance_threshold: 0.05
+```
 
-カメラが認識していない!とか出たら以下の状況が考えられます
+## 実行
+`opt` ディレクトリで実行します。
 
-　・カメラデバイスが正常に接続されていない
- 
-　・カメラが複数台ある
- 
-     この場合はd-mak.pyの
-     
-     cap = cv2.VideoCapture(任意のカメラ番号)
-     
-     をいじってください
+```powershell
+python d-mak.py
+```
+
+## 動作確認手順（固定シナリオ）
+1. OKサインを出す。
+2. 7秒以内にパーを出し、想定デバイスが動くことを確認する。
+3. OKサインを出して7秒待ち、時間切れ後のジェスチャが無視されることを確認する。
+4. OKサインなしでジェスチャを出し、実行されないことを確認する。
+5. 実行直後に連続ジェスチャを出し、クールダウンが効くことを確認する。
+
+## トラブルシュート
+- カメラが開けない場合:
+     - カメラ接続を確認する。
+     - 他アプリがカメラを使用していないか確認する。
+     - 複数カメラ環境では `config.yaml` の `camera.device_number` を変更する。

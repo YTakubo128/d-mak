@@ -53,6 +53,7 @@ class HandGestureApp:
         confirmation_frames = gesture_config.get('confirmation_frames', 10)
         cooldown_seconds = gesture_config.get('cooldown_seconds', 5)
         detection_confidence = gesture_config.get('detection_confidence', 0.5)
+        ok_sign_distance_threshold = gesture_config.get('ok_sign_distance_threshold', 0.05)
         
         # SwitchBot設定
         switchbot_config = self.config.get('switchbot', {})
@@ -60,7 +61,10 @@ class HandGestureApp:
         self.secret = switchbot_config.get('secret', '')
         
         # 初期化
-        self.gesture_detector = HandGestureDetector(detection_confidence)
+        self.gesture_detector = HandGestureDetector(
+            detection_confidence=detection_confidence,
+            ok_sign_distance_threshold=ok_sign_distance_threshold,
+        )
         self.gesture_handler = GestureHandler(confirmation_frames, cooldown_seconds)
         self.executor = AsyncExecutor()
         self.controller = SwitchBotController(self.token, self.secret, self.config, logger) if self.token and self.secret else None
@@ -75,12 +79,18 @@ class HandGestureApp:
         # ジェスチャごとの実行対象デバイス一覧をロード
         self.gesture_actions = self._build_gesture_actions()
         
-        # OKサインの起動トリガーフラグと受付時間
-        self.peace_sign_trigger_active = False
-        self.peace_sign_trigger_time: Optional[float] = None
-        self.peace_sign_timeout_seconds = gesture_config.get('peace_sign_timeout_seconds', 7)  # 受付時間（秒）
-        self.peace_sign_consecutive_frames = 0
-        self.peace_sign_threshold = gesture_config.get('peace_sign_threshold_frames', 3)  # ノイズ除去用
+        # OKサインの起動トリガー状態
+        self.ok_sign_trigger_active = False
+        self.ok_sign_trigger_time: Optional[float] = None
+        self.ok_sign_timeout_seconds = gesture_config.get(
+            'ok_sign_timeout_seconds',
+            gesture_config.get('peace_sign_timeout_seconds', 7),
+        )
+        self.ok_sign_consecutive_frames = 0
+        self.ok_sign_threshold_frames = gesture_config.get(
+            'ok_sign_threshold_frames',
+            gesture_config.get('peace_sign_threshold_frames', 3),
+        )
         
         logger.info("HandGestureApp initialized")
 
@@ -280,41 +290,37 @@ class HandGestureApp:
                     parameter,
                 )
     
-    def set_pending_gesture(self, gesture_id: int):
-        """確認待ちジェスチャを設定"""
-        self.pending_gesture_id = gesture_id
-        self.pending_gesture_time = time.time()
-        logger.info(f"Waiting for confirmation (gesture {gesture_id}, timeout: {self.confirmation_timeout}s")
-    
-    def update_peace_sign_trigger(self, is_peace_sign_detected: bool):
+    def update_ok_sign_trigger(self, is_ok_sign_detected: bool):
         """OKサイン起動トリガーを更新（7秒受付時間）"""
-        if is_peace_sign_detected:
-            self.peace_sign_consecutive_frames += 1
+        if is_ok_sign_detected:
+            self.ok_sign_consecutive_frames += 1
             # OKサインが連続検出されたらトリガーON
-            if self.peace_sign_consecutive_frames >= self.peace_sign_threshold and not self.peace_sign_trigger_active:
-                self.peace_sign_trigger_active = True
-                self.peace_sign_trigger_time = time.time()
-                logger.debug(f"👍 OK sign trigger ACTIVATED (accepting for {self.peace_sign_timeout_seconds}s)")
+            if self.ok_sign_consecutive_frames >= self.ok_sign_threshold_frames and not self.ok_sign_trigger_active:
+                self.ok_sign_trigger_active = True
+                self.ok_sign_trigger_time = time.time()
+                logger.debug(
+                    f"OK sign trigger ACTIVATED (accepting for {self.ok_sign_timeout_seconds}s)"
+                )
         else:
-            self.peace_sign_consecutive_frames = 0
+            self.ok_sign_consecutive_frames = 0
     
-    def check_peace_sign_timeout(self):
+    def check_ok_sign_timeout(self):
         """OKサイン受付時間がタイムアウトしたか確認"""
-        if not self.peace_sign_trigger_active or self.peace_sign_trigger_time is None:
+        if not self.ok_sign_trigger_active or self.ok_sign_trigger_time is None:
             return
         
-        elapsed = time.time() - self.peace_sign_trigger_time
-        if elapsed > self.peace_sign_timeout_seconds:
-            self.peace_sign_trigger_active = False
-            self.peace_sign_trigger_time = None
-            logger.debug("👍 OK sign trigger TIMEOUT - acceptance window closed")
+        elapsed = time.time() - self.ok_sign_trigger_time
+        if elapsed > self.ok_sign_timeout_seconds:
+            self.ok_sign_trigger_active = False
+            self.ok_sign_trigger_time = None
+            logger.debug("OK sign trigger TIMEOUT - acceptance window closed")
     
-    def get_remaining_trigger_time(self) -> float:
+    def get_remaining_ok_sign_time(self) -> float:
         """OKサイントリガー受付の残り時間を取得"""
-        if not self.peace_sign_trigger_active or self.peace_sign_trigger_time is None:
+        if not self.ok_sign_trigger_active or self.ok_sign_trigger_time is None:
             return 0
-        elapsed = time.time() - self.peace_sign_trigger_time
-        remaining = max(0, self.peace_sign_timeout_seconds - elapsed)
+        elapsed = time.time() - self.ok_sign_trigger_time
+        remaining = max(0, self.ok_sign_timeout_seconds - elapsed)
         return remaining
     
     def run(self):
@@ -340,7 +346,7 @@ class HandGestureApp:
                     
                     # OKサイン（ID:4）でトリガーを更新
                     is_ok_sign = raw_gesture == 4
-                    self.update_peace_sign_trigger(is_ok_sign)
+                    self.update_ok_sign_trigger(is_ok_sign)
                     
                     # ジェスチャを更新・確定を判定
                     confirmed_gesture = self.gesture_handler.update_gesture(raw_gesture)
@@ -349,22 +355,26 @@ class HandGestureApp:
                     if confirmed_gesture is not None:
                         if confirmed_gesture == 4:
                             # OKサイン確定 → トリガーON
-                            self.peace_sign_trigger_active = True
-                            self.peace_sign_trigger_time = time.time()
-                            logger.info(f"👍 OK sign CONFIRMED - accepting gesture for {self.peace_sign_timeout_seconds}s")
+                            self.ok_sign_trigger_active = True
+                            self.ok_sign_trigger_time = time.time()
+                            logger.info(
+                                f"OK sign CONFIRMED - accepting gesture for {self.ok_sign_timeout_seconds}s"
+                            )
                             self.gesture_handler.reset_buffer()
-                        elif self.peace_sign_trigger_active:
+                        elif self.ok_sign_trigger_active:
                             # トリガーがアクティブな場合、他のジェスチャを処理
-                            remaining_time = self.get_remaining_trigger_time()
+                            remaining_time = self.get_remaining_ok_sign_time()
                             if remaining_time > 0:
                                 # 時間内：クールダウン確認して実行
                                 if self.gesture_handler.can_execute(confirmed_gesture):
-                                    logger.info(f"👍 Gesture {confirmed_gesture} executed within trigger window ({remaining_time:.1f}s remaining)")
+                                    logger.info(
+                                        f"Gesture {confirmed_gesture} executed within trigger window ({remaining_time:.1f}s remaining)"
+                                    )
                                     self.handle_gesture(confirmed_gesture)
                                     self.gesture_handler.reset_buffer()
                                     # ジェスチャ実行後、トリガーをリセット
-                                    self.peace_sign_trigger_active = False
-                                    self.peace_sign_trigger_time = None
+                                    self.ok_sign_trigger_active = False
+                                    self.ok_sign_trigger_time = None
                                 else:
                                     logger.debug(f"Gesture {confirmed_gesture} is on cooldown")
                             else:
@@ -373,7 +383,7 @@ class HandGestureApp:
                                 self.gesture_handler.reset_buffer()
                     
                     # トリガーのタイムアウト確認
-                    self.check_peace_sign_timeout()
+                    self.check_ok_sign_timeout()
                     
                     # ランドマークを描画（デバッグ用）
                     frame_with_landmarks = self.gesture_detector.visualize_landmarks(frame, draw=True)
@@ -384,11 +394,11 @@ class HandGestureApp:
                     confirmed_display = gesture_name_map.get(confirmed_gesture, "None") if confirmed_gesture else "None"
                     
                     # OKサイン起動状態表示
-                    if self.peace_sign_trigger_active:
-                        remaining = self.get_remaining_trigger_time()
-                        trigger_display = f"👍 ACTIVE ({remaining:.1f}s)" if remaining > 0 else "👍 TIMEOUT"
+                    if self.ok_sign_trigger_active:
+                        remaining = self.get_remaining_ok_sign_time()
+                        trigger_display = f"OK ACTIVE ({remaining:.1f}s)" if remaining > 0 else "OK TIMEOUT"
                     else:
-                        trigger_display = "○ Inactive"
+                        trigger_display = "TRIGGER INACTIVE"
                     
                     cv2.putText(
                         frame_with_landmarks,

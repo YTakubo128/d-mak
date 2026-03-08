@@ -5,10 +5,11 @@ import mediapipe as mp
 class HandGestureDetector:
     """手のジェスチャを認識"""
     
-    def __init__(self, detection_confidence: float = 0.5):
+    def __init__(self, detection_confidence: float = 0.5, ok_sign_distance_threshold: float = 0.05):
         """
         Args:
             detection_confidence: 検出信頼度 (0.0-1.0)
+            ok_sign_distance_threshold: OKサイン判定距離しきい値
         """
         self.mp_hands = mp.solutions.hands
         self.hands = self.mp_hands.Hands(
@@ -16,6 +17,7 @@ class HandGestureDetector:
             max_num_hands=1,
             min_detection_confidence=detection_confidence
         )
+        self.ok_sign_distance_threshold = ok_sign_distance_threshold
     
     @staticmethod
     def calc_distance(p0, p1) -> float:
@@ -120,7 +122,7 @@ class HandGestureDetector:
         index_tip = hand_landmarks.landmark[8]
         thumb_index_distance = self.calc_distance(thumb_tip, index_tip)
         # OKサイン：親指と人差し指が接近し、他の指は開いている
-        is_ok_sign = (thumb_index_distance < 0.05 and 
+        is_ok_sign = (thumb_index_distance < self.ok_sign_distance_threshold and 
                       second_finger_is_open and third_finger_is_open and 
                       fourth_finger_is_open)
         

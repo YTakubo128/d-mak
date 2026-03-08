@@ -7,7 +7,9 @@ gesture:
   confirmation_frames: 10      # 10フレーム連続で確定
   cooldown_seconds: 5          # 5秒クールダウン
   detection_confidence: 0.5
-  confirmation_timeout_seconds: 5  # OKサイン待機タイムアウト（秒）
+  ok_sign_timeout_seconds: 7    # OKサイン起動後の受付時間（秒）
+  ok_sign_threshold_frames: 3   # OKサイン起動に必要な連続検出フレーム数
+  ok_sign_distance_threshold: 0.05  # 親指と人差し指の距離しきい値
 
 switchbot:
   token: "YOUR_API_TOKEN_HERE"          # SwitchBot APIトークン
