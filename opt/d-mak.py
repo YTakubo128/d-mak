@@ -269,6 +269,16 @@ class HandGestureApp:
                         (255, 255, 255),
                         2
                     )
+
+                    cv2.putText(
+                        frame_with_landmarks,
+                        'PRESS "q" key to Exit',
+                        (10, 150),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.7,
+                        (0, 255, 255),
+                        2
+                    )
                     
                     # フレーム表示
                     cv2.imshow('Hand Gesture Control', frame_with_landmarks)
