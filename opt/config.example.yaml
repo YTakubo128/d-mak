@@ -1,0 +1,18 @@
+camera:
+  resolution: [1280, 720]  # 720p (ユーザーのカメラに合わせて調整可)
+  fps: 30                   # フレームレート
+  device_number: 0          # カメラデバイス番号（複数カメラがある場合は1, 2...）
+
+gesture:
+  confirmation_frames: 10   # ジェスチャ確定に必要なフレーム数（この回数連続で同じジェスチャが必要）
+  cooldown_seconds: 5       # ジェスチャ実行後のクールダウン時間（秒）
+  detection_confidence: 0.5 # 手検出の信頼度（0.0-1.0、高いほど厳密）
+
+switchbot:
+  token: "YOUR_API_TOKEN_HERE"          # SwitchBot APIトークン
+  secret: "YOUR_API_SECRET_HERE"        # SwitchBot シークレットキー
+
+# 使用方法:
+# 1. このファイルを複製して config.yaml として保存
+# 2. YOUR_API_TOKEN_HERE と YOUR_API_SECRET_HERE を実際の値で置き換え
+# 3. カメラやジェスチャ設定を必要に応じて調整
