@@ -116,10 +116,10 @@ class HandGestureDetector:
         ) < 100
         
         # ジェスチャの判定
-        # パー：全ての指が開いている
-        if (thumb_is_open and first_finger_is_open and 
-            second_finger_is_open and third_finger_is_open and 
-            fourth_finger_is_open):
+        # パー：4本指（人差し指〜小指）が開いている
+        # 親指はカメラ角度で誤判定しやすいため必須条件から外す
+        if (first_finger_is_open and second_finger_is_open and
+            third_finger_is_open and fourth_finger_is_open):
             return 1  # パー
         
         # グー：全ての指が閉じている

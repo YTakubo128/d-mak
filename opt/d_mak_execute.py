@@ -138,7 +138,14 @@ class SwitchBotController:
                 status_response = self.get_device_status(device_id)
                 if not status_response or 'body' not in status_response:
                     self.logger.warning(f"Failed to get device status (attempt {attempt})")
-                    
+
+                    # 状態取得に失敗しても、toggle コマンドの直接実行を試す
+                    self.logger.info(
+                        f"Fallback to direct toggle command for {device_id} (attempt {attempt})"
+                    )
+                    if self.execute_command(device_id, "toggle"):
+                        return True
+
                     if attempt < self.max_retries:
                         delay = self.retry_delay * (2 ** (attempt - 1))
                         self.logger.info(f"Retrying in {delay}s...")
@@ -152,8 +159,11 @@ class SwitchBotController:
                 elif power_state == "off":
                     command = "turnOn"
                 else:
-                    self.logger.error(f"Unknown power state: {power_state}")
-                    return False
+                    # 一部デバイスでは power が unknown になるため、toggle を試す
+                    self.logger.warning(
+                        f"Unknown power state: {power_state}. Fallback to toggle command."
+                    )
+                    return self.execute_command(device_id, "toggle")
                 
                 return self.execute_command(device_id, command)
             

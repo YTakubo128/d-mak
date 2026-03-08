@@ -5,6 +5,7 @@ from typing import Dict, List
 from hand_gesture import HandGestureDetector
 from performance_utils import GestureHandler, AsyncExecutor
 from d_mak_execute import SwitchBotController, load_config
+from switchbot_api_list import get_callable_commands, get_command
 from logger_config import LoggerConfig
 from memory_manager import MemoryManager
 from error_handler import ErrorHandler
@@ -120,12 +121,47 @@ class HandGestureApp:
                 continue
 
             targets = []
-            for key in device_keys:
-                device = self.device_lookup.get(str(key))
-                if not device:
-                    logger.warning(f"Unknown device key in gesture_actions[{raw_gesture_id}]: {key}")
+            for item in device_keys:
+                # 後方互換: "light_main" のような文字列指定は toggle 扱い
+                if isinstance(item, str):
+                    device_key = item
+                    command = 'toggle'
+                    parameter = 'default'
+                elif isinstance(item, dict):
+                    device_key = item.get('device') or item.get('key')
+                    command = str(item.get('command', 'toggle'))
+                    parameter = str(item.get('parameter', 'default'))
+                else:
+                    logger.warning(
+                        f"Unsupported action format in gesture_actions[{raw_gesture_id}]: {item}"
+                    )
                     continue
-                targets.append(device)
+
+                device = self.device_lookup.get(str(device_key))
+                if not device:
+                    logger.warning(
+                        f"Unknown device key in gesture_actions[{raw_gesture_id}]: {device_key}"
+                    )
+                    continue
+
+                device_type = device.get('type', '')
+                known_commands = get_callable_commands(device_type)
+                if known_commands and command != 'toggle' and get_command(device_type, command) is None:
+                    logger.warning(
+                        f"Command '{command}' is not listed for device type '{device_type}'. "
+                        f"gesture_actions[{raw_gesture_id}] entry skipped."
+                    )
+                    continue
+                if not known_commands and command != 'toggle':
+                    logger.info(
+                        f"Device type '{device_type}' has no command catalog entry. "
+                        f"Execute '{command}' without catalog validation."
+                    )
+
+                target = dict(device)
+                target['command'] = command
+                target['parameter'] = parameter
+                targets.append(target)
 
             if targets:
                 actions[gesture_id] = {
@@ -138,15 +174,39 @@ class HandGestureApp:
             actions = {
                 1: {
                     'name': 'パー',
-                    'targets': [{'id': 'device-id-1', 'name': 'default-1', 'type': 'unknown'}]
+                    'targets': [
+                        {
+                            'id': 'device-id-1',
+                            'name': 'default-1',
+                            'type': 'unknown',
+                            'command': 'toggle',
+                            'parameter': 'default',
+                        }
+                    ]
                 },
                 2: {
                     'name': 'グー',
-                    'targets': [{'id': 'device-id-2', 'name': 'default-2', 'type': 'unknown'}]
+                    'targets': [
+                        {
+                            'id': 'device-id-2',
+                            'name': 'default-2',
+                            'type': 'unknown',
+                            'command': 'toggle',
+                            'parameter': 'default',
+                        }
+                    ]
                 },
                 3: {
                     'name': 'ワン',
-                    'targets': [{'id': 'device-id-3', 'name': 'default-3', 'type': 'unknown'}]
+                    'targets': [
+                        {
+                            'id': 'device-id-3',
+                            'name': 'default-3',
+                            'type': 'unknown',
+                            'command': 'toggle',
+                            'parameter': 'default',
+                        }
+                    ]
                 },
             }
 
@@ -195,8 +255,22 @@ class HandGestureApp:
         for target in targets:
             device_id = target['id']
             device_name = target.get('name', device_id)
-            logger.info(f"Trigger device: {device_name} ({device_id})")
-            self.executor.execute_async(self.controller.toggle_device, device_id)
+            command = target.get('command', 'toggle')
+            parameter = target.get('parameter', 'default')
+
+            logger.info(
+                f"Trigger device: {device_name} ({device_id}) with {command}({parameter})"
+            )
+
+            if command == 'toggle':
+                self.executor.execute_async(self.controller.toggle_device, device_id)
+            else:
+                self.executor.execute_async(
+                    self.controller.execute_command,
+                    device_id,
+                    command,
+                    parameter,
+                )
     
     def run(self):
         """メインループを実行"""

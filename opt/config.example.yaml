@@ -26,15 +26,30 @@ devices:
     type: "plug-mini"
     enabled: true
 
-# ジェスチャIDごとの実行対象デバイス（複数指定可）
+# ジェスチャIDごとの実行アクション（複数指定可）
 # 1: パー, 2: グー, 3: ワン
+# 形式:
+# - "light_main"  # 旧形式（toggle実行）
+# - { device: "light_main", command: "turnOn", parameter: "default" }
 gesture_actions:
-  "1": ["light_main"]
-  "2": ["fan_room"]
-  "3": ["light_main", "fan_room"]
+  "1":
+    - device: "light_main"
+      command: "toggle"
+      parameter: "default"
+  "2":
+    - device: "fan_room"
+      command: "toggle"
+      parameter: "default"
+  "3":
+    - device: "light_main"
+      command: "turnOn"
+      parameter: "default"
+    - device: "fan_room"
+      command: "turnOff"
+      parameter: "default"
 
 # 使用方法:
 # 1. このファイルを複製して config.yaml として保存
 # 2. YOUR_API_TOKEN_HERE と YOUR_API_SECRET_HERE を実際の値で置き換え
-# 3. devices に使用デバイスを追加し、gesture_actions でジェスチャに割り当て
+# 3. devices に使用デバイスを追加し、gesture_actions でコマンドを割り当て
 # 4. カメラやジェスチャ設定を必要に応じて調整
