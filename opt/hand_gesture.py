@@ -58,7 +58,7 @@ class HandGestureDetector:
             frame: OpenCV フレーム (BGR形式)
         
         Returns:
-            ジェスチャID: 0=無検出, 1=パー, 2=グー, 3=ワン, 4=ピースサイン（起動トリガー）
+            ジェスチャID: 0=無検出, 1=パー, 2=グー, 3=ワン, 4=OKサイン（起動トリガー）
         """
         import cv2
         
@@ -115,17 +115,17 @@ class HandGestureDetector:
             hand_landmarks.landmark[20]
         ) < 100
         
-        # ピースサイン判定：人差し指と中指でV字
+        # OKサイン判定：親指と人差し指で円を作る
+        thumb_tip = hand_landmarks.landmark[4]
         index_tip = hand_landmarks.landmark[8]
-        middle_tip = hand_landmarks.landmark[12]
-        index_middle_distance = self.calc_distance(index_tip, middle_tip)
-        # ピースサイン：人差し指と中指が開いていて、親指と薬指・小指は閉じている
-        is_peace_sign = (first_finger_is_open and second_finger_is_open and 
-                        not third_finger_is_open and not fourth_finger_is_open and
-                        index_middle_distance > 0.05)  # 指の間隔がある
+        thumb_index_distance = self.calc_distance(thumb_tip, index_tip)
+        # OKサイン：親指と人差し指が接近し、他の指は開いている
+        is_ok_sign = (thumb_index_distance < 0.05 and 
+                      second_finger_is_open and third_finger_is_open and 
+                      fourth_finger_is_open)
         
-        if is_peace_sign:
-            return 4  # ピースサイン
+        if is_ok_sign:
+            return 4  # OK
         
         # ジェスチャの判定
         # パー：4本指（人差し指〜小指）が開いている
