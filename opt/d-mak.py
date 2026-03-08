@@ -1,7 +1,8 @@
 import cv2
 import yaml
 import logging
-from typing import Dict, List
+import time
+from typing import Dict, List, Optional
 from hand_gesture import HandGestureDetector
 from performance_utils import GestureHandler, AsyncExecutor
 from d_mak_execute import SwitchBotController, load_config
@@ -73,6 +74,13 @@ class HandGestureApp:
 
         # ジェスチャごとの実行対象デバイス一覧をロード
         self.gesture_actions = self._build_gesture_actions()
+        
+        # ピースサインの起動トリガーフラグと受付時間
+        self.peace_sign_trigger_active = False
+        self.peace_sign_trigger_time: Optional[float] = None
+        self.peace_sign_timeout_seconds = gesture_config.get('peace_sign_timeout_seconds', 7)  # 受付時間（秒）
+        self.peace_sign_consecutive_frames = 0
+        self.peace_sign_threshold = gesture_config.get('peace_sign_threshold_frames', 3)  # ノイズ除去用
         
         logger.info("HandGestureApp initialized")
 
@@ -272,6 +280,43 @@ class HandGestureApp:
                     parameter,
                 )
     
+    def set_pending_gesture(self, gesture_id: int):
+        """確認待ちジェスチャを設定"""
+        self.pending_gesture_id = gesture_id
+        self.pending_gesture_time = time.time()
+        logger.info(f"Waiting for confirmation (gesture {gesture_id}, timeout: {self.confirmation_timeout}s")
+    
+    def update_peace_sign_trigger(self, is_peace_sign_detected: bool):
+        """ピースサイン起動トリガーを更新（7秒受付時間）"""
+        if is_peace_sign_detected:
+            self.peace_sign_consecutive_frames += 1
+            # ピースサインが連続検出されたらトリガーON
+            if self.peace_sign_consecutive_frames >= self.peace_sign_threshold and not self.peace_sign_trigger_active:
+                self.peace_sign_trigger_active = True
+                self.peace_sign_trigger_time = time.time()
+                logger.debug(f"✌ Peace sign trigger ACTIVATED (accepting for {self.peace_sign_timeout_seconds}s)")
+        else:
+            self.peace_sign_consecutive_frames = 0
+    
+    def check_peace_sign_timeout(self):
+        """ピースサイン受付時間がタイムアウトしたか確認"""
+        if not self.peace_sign_trigger_active or self.peace_sign_trigger_time is None:
+            return
+        
+        elapsed = time.time() - self.peace_sign_trigger_time
+        if elapsed > self.peace_sign_timeout_seconds:
+            self.peace_sign_trigger_active = False
+            self.peace_sign_trigger_time = None
+            logger.debug("✌ Peace sign trigger TIMEOUT - acceptance window closed")
+    
+    def get_remaining_trigger_time(self) -> float:
+        """トリガー受付の残り時間を取得"""
+        if not self.peace_sign_trigger_active or self.peace_sign_trigger_time is None:
+            return 0
+        elapsed = time.time() - self.peace_sign_trigger_time
+        remaining = max(0, self.peace_sign_timeout_seconds - elapsed)
+        return remaining
+    
     def run(self):
         """メインループを実行"""
         logger.info("Starting gesture recognition...")
@@ -293,29 +338,61 @@ class HandGestureApp:
                     raw_gesture = self.gesture_detector.detect_pose(frame)
                     self.error_handler.reset_camera_error_count()  # エラーカウンタをリセット
                     
+                    # ピースサイン（ID:4）でトリガーを更新
+                    is_peace_sign = raw_gesture == 4
+                    self.update_peace_sign_trigger(is_peace_sign)
+                    
                     # ジェスチャを更新・確定を判定
                     confirmed_gesture = self.gesture_handler.update_gesture(raw_gesture)
                     
-                    # 確定したジェスチャがある場合
+                    # 確定したジェスチャを処理
                     if confirmed_gesture is not None:
-                        # クールダウンを確認して実行
-                        if self.gesture_handler.can_execute(confirmed_gesture):
-                            self.handle_gesture(confirmed_gesture)
+                        if confirmed_gesture == 4:
+                            # ピースサイン確定 → トリガーON
+                            self.peace_sign_trigger_active = True
+                            self.peace_sign_trigger_time = time.time()
+                            logger.info(f"✌ Peace sign CONFIRMED - accepting gesture for {self.peace_sign_timeout_seconds}s")
                             self.gesture_handler.reset_buffer()
-                        else:
-                            logger.debug(f"Gesture {confirmed_gesture} is on cooldown")
+                        elif self.peace_sign_trigger_active:
+                            # トリガーがアクティブな場合、他のジェスチャを処理
+                            remaining_time = self.get_remaining_trigger_time()
+                            if remaining_time > 0:
+                                # 時間内：クールダウン確認して実行
+                                if self.gesture_handler.can_execute(confirmed_gesture):
+                                    logger.info(f"✌ Gesture {confirmed_gesture} executed within trigger window ({remaining_time:.1f}s remaining)")
+                                    self.handle_gesture(confirmed_gesture)
+                                    self.gesture_handler.reset_buffer()
+                                    # ジェスチャ実行後、トリガーをリセット
+                                    self.peace_sign_trigger_active = False
+                                    self.peace_sign_trigger_time = None
+                                else:
+                                    logger.debug(f"Gesture {confirmed_gesture} is on cooldown")
+                            else:
+                                # 時間切れ：ジェスチャを無視
+                                logger.debug(f"Gesture {confirmed_gesture} ignored - trigger timeout")
+                                self.gesture_handler.reset_buffer()
+                    
+                    # トリガーのタイムアウト確認
+                    self.check_peace_sign_timeout()
                     
                     # ランドマークを描画（デバッグ用）
                     frame_with_landmarks = self.gesture_detector.visualize_landmarks(frame, draw=True)
                     
                     # フレーム情報を表示
-                    gesture_name_map = {0: "None", 1: "Paper", 2: "Fist", 3: "One"}
+                    gesture_name_map = {0: "None", 1: "Paper", 2: "Fist", 3: "One", 4: "Peace"}
                     gesture_display = gesture_name_map.get(raw_gesture, "Unknown")
                     confirmed_display = gesture_name_map.get(confirmed_gesture, "None") if confirmed_gesture else "None"
                     
+                    # ピースサイン起動状態表示
+                    if self.peace_sign_trigger_active:
+                        remaining = self.get_remaining_trigger_time()
+                        trigger_display = f"✌ ACTIVE ({remaining:.1f}s)" if remaining > 0 else "✌ TIMEOUT"
+                    else:
+                        trigger_display = "○ Inactive"
+                    
                     cv2.putText(
                         frame_with_landmarks,
-                        f"Current: {gesture_display} | Confirmed: {confirmed_display}",
+                        f"Current: {gesture_display} | Confirmed: {confirmed_display} | {trigger_display}",
                         (10, 30),
                         cv2.FONT_HERSHEY_SIMPLEX,
                         0.7,

@@ -4,9 +4,10 @@ camera:
   device_number: 0          # カメラデバイス番号（複数カメラがある場合は1, 2...）
 
 gesture:
-  confirmation_frames: 10   # ジェスチャ確定に必要なフレーム数（この回数連続で同じジェスチャが必要）
-  cooldown_seconds: 5       # ジェスチャ実行後のクールダウン時間（秒）
-  detection_confidence: 0.5 # 手検出の信頼度（0.0-1.0、高いほど厳密）
+  confirmation_frames: 10      # 10フレーム連続で確定
+  cooldown_seconds: 5          # 5秒クールダウン
+  detection_confidence: 0.5
+  confirmation_timeout_seconds: 5  # OKサイン待機タイムアウト（秒）
 
 switchbot:
   token: "YOUR_API_TOKEN_HERE"          # SwitchBot APIトークン
