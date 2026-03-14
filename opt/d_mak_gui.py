@@ -81,6 +81,7 @@ class DMakGuiApp:
         self.preview_photo = None
         self.preview_width = 640
         self.preview_height = 360
+        self.preview_error_reported = False
         self.log_queue = queue.Queue()
         self.max_log_lines = 300
 
@@ -266,11 +267,18 @@ class DMakGuiApp:
         try:
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             resized = cv2.resize(rgb, (self.preview_width, self.preview_height), interpolation=cv2.INTER_AREA)
-            ok, ppm_buf = cv2.imencode(".ppm", resized)
-            if not ok:
-                return None
-            ppm_base64 = base64.b64encode(ppm_buf.tobytes()).decode("ascii")
-            return tk.PhotoImage(data=ppm_base64, format="PPM")
+            # Prefer PNG encoding for Tk PhotoImage stability.
+            ok_png, png_buf = cv2.imencode(".png", resized)
+            if ok_png:
+                png_base64 = base64.b64encode(png_buf.tobytes()).decode("ascii")
+                return tk.PhotoImage(data=png_base64)
+
+            # Fallback path when PNG encoding is unavailable.
+            ok_ppm, ppm_buf = cv2.imencode(".ppm", resized)
+            if ok_ppm:
+                ppm_base64 = base64.b64encode(ppm_buf.tobytes()).decode("ascii")
+                return tk.PhotoImage(data=ppm_base64, format="PPM")
+            return None
         except Exception:
             return None
 
@@ -315,10 +323,14 @@ class DMakGuiApp:
 
         photo = self._frame_to_photo(frame)
         if photo is None:
+            if not self.preview_error_reported:
+                self._append_log("ERROR", "Camera preview conversion failed")
+                self.preview_error_reported = True
             self._set_preview_placeholder("Preview conversion failed")
             self.root.after(200, self._update_preview_frame)
             return
 
+        self.preview_error_reported = False
         self.preview_photo = photo
         self.preview_label.configure(image=self.preview_photo, text="")
         self.root.after(66, self._update_preview_frame)
