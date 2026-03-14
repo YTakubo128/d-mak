@@ -34,6 +34,51 @@ gesture:
 python d-mak.py
 ```
 
+## GUIランチャー（カメラ選択 / 監視ON-OFF）
+`opt` ディレクトリで次を実行すると、GUIから監視制御できます。
+
+```powershell
+python d_mak_gui.py
+```
+
+GUIでできること:
+- 接続中カメラの一覧取得（`Refresh`）
+- プルダウンでカメラ切り替え（実行中は自動再起動）
+- 監視プロセスの `Start monitoring` / `Stop monitoring`
+
+補足:
+- 監視本体は `d-mak.py` が別プロセスで起動します。
+- OpenCVの画面で `q` を押して終了した場合も、GUI側で状態が追従します。
+
+## EXE化（Windows, PyInstaller）
+1. 依存をインストール
+
+```powershell
+pip install -r requirements.txt
+pip install pyinstaller
+```
+
+2. `opt` でGUIランチャーを `exe` 化
+
+```powershell
+cd opt
+pyinstaller --noconfirm --onefile --windowed --name d-mak-launcher d_mak_gui.py
+```
+
+3. 監視本体を別 `exe` 化
+
+```powershell
+pyinstaller --noconfirm --onefile --name d-mak-monitor d_mak_monitor.py --add-data "d-mak.py;." --add-data "config.yaml;."
+```
+
+4. 出力先
+- `opt\dist\d-mak-launcher.exe`
+- `opt\dist\d-mak-monitor.exe`
+
+注意:
+- ランチャーは同一フォルダの `d-mak-monitor.exe` を優先して起動します。
+- 配布時は2つの `exe` を同じフォルダに置いてください。
+
 ## 動作確認手順（固定シナリオ）
 1. OKサインを出す。
 2. 7秒以内にパーを出し、想定デバイスが動くことを確認する。
