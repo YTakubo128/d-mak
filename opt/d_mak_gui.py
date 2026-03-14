@@ -2,6 +2,7 @@ import os
 import signal
 import subprocess
 import sys
+import base64
 import tkinter as tk
 from tkinter import ttk
 from tkinter import messagebox
@@ -58,7 +59,7 @@ class DMakGuiApp:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title("d-mak launcher")
-        self.root.geometry("560x220")
+        self.root.geometry("760x600")
         self.root.resizable(False, False)
 
         if getattr(sys, "frozen", False):
@@ -73,6 +74,10 @@ class DMakGuiApp:
         self.config = load_config(self.config_path)
         self.process: subprocess.Popen | None = None
         self.cameras: List[Tuple[int, str]] = []
+        self.preview_cap = None
+        self.preview_photo = None
+        self.preview_width = 640
+        self.preview_height = 360
 
         self.selected_camera = tk.StringVar()
         self.status_text = tk.StringVar(value="Status: stopped")
@@ -138,6 +143,21 @@ class DMakGuiApp:
             text="Tip: Press 'q' in the OpenCV window to stop monitoring from the monitor side.",
         )
         info.pack(anchor="w", pady=(8, 0))
+
+        preview_group = ttk.LabelFrame(container, text="Camera preview", padding=8)
+        preview_group.pack(fill="both", expand=True, pady=(10, 0))
+
+        self.preview_label = tk.Label(
+            preview_group,
+            text="No camera preview",
+            width=80,
+            height=22,
+            bg="#111111",
+            fg="#dddddd",
+            anchor="center",
+        )
+        self.preview_label.pack(fill="both", expand=True)
+
         self._set_status("stopped", "Status: stopped")
 
     def _set_status(self, level: str, message: str) -> None:
@@ -152,6 +172,8 @@ class DMakGuiApp:
             self.camera_combo["values"] = []
             self.selected_camera.set("")
             self._set_status("no-camera", "Status: no camera found")
+            self._stop_preview()
+            self._set_preview_placeholder("No camera preview")
             if not initial:
                 messagebox.showwarning("No camera", "No available camera device was found.")
             return
@@ -171,6 +193,70 @@ class DMakGuiApp:
             self.camera_combo.current(labels.index(current_label))
         else:
             self.camera_combo.current(default_index)
+
+        self._restart_preview()
+
+    def _set_preview_placeholder(self, message: str) -> None:
+        self.preview_photo = None
+        self.preview_label.configure(image="", text=message)
+
+    def _frame_to_photo(self, frame) -> tk.PhotoImage | None:
+        try:
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            resized = cv2.resize(rgb, (self.preview_width, self.preview_height), interpolation=cv2.INTER_AREA)
+            ok, ppm_buf = cv2.imencode(".ppm", resized)
+            if not ok:
+                return None
+            ppm_base64 = base64.b64encode(ppm_buf.tobytes()).decode("ascii")
+            return tk.PhotoImage(data=ppm_base64, format="PPM")
+        except Exception:
+            return None
+
+    def _start_preview(self) -> None:
+        self._stop_preview()
+
+        camera_index = self._selected_camera_index()
+        if camera_index is None:
+            self._set_preview_placeholder("Select a camera")
+            return
+
+        cap = try_open_camera(camera_index)
+        if not cap.isOpened():
+            cap.release()
+            self._set_preview_placeholder(f"Failed to open camera {camera_index}")
+            return
+
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        self.preview_cap = cap
+        self._update_preview_frame()
+
+    def _stop_preview(self) -> None:
+        if self.preview_cap is not None:
+            self.preview_cap.release()
+            self.preview_cap = None
+
+    def _restart_preview(self) -> None:
+        self._start_preview()
+
+    def _update_preview_frame(self) -> None:
+        if self.preview_cap is None:
+            return
+
+        ret, frame = self.preview_cap.read()
+        if not ret or frame is None:
+            self._set_preview_placeholder("Preview not available")
+            self.root.after(200, self._update_preview_frame)
+            return
+
+        photo = self._frame_to_photo(frame)
+        if photo is None:
+            self._set_preview_placeholder("Preview conversion failed")
+            self.root.after(200, self._update_preview_frame)
+            return
+
+        self.preview_photo = photo
+        self.preview_label.configure(image=self.preview_photo, text="")
+        self.root.after(66, self._update_preview_frame)
 
     def _selected_camera_index(self) -> int | None:
         label = self.selected_camera.get()
@@ -199,6 +285,8 @@ class DMakGuiApp:
             self.start_monitoring()
         else:
             self._set_status("saved", "Status: camera selection saved")
+
+        self._restart_preview()
 
     def toggle_monitoring(self) -> None:
         if self.process and self.process.poll() is None:
@@ -269,6 +357,7 @@ class DMakGuiApp:
 
     def _on_close(self) -> None:
         self.stop_monitoring()
+        self._stop_preview()
         self.root.destroy()
 
 
