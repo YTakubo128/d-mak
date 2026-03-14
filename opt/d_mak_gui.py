@@ -3,6 +3,9 @@ import signal
 import subprocess
 import sys
 import base64
+import queue
+import threading
+from datetime import datetime
 import tkinter as tk
 from tkinter import ttk
 from tkinter import messagebox
@@ -78,6 +81,8 @@ class DMakGuiApp:
         self.preview_photo = None
         self.preview_width = 640
         self.preview_height = 360
+        self.log_queue = queue.Queue()
+        self.max_log_lines = 300
 
         self.selected_camera = tk.StringVar()
         self.status_text = tk.StringVar(value="Status: stopped")
@@ -158,13 +163,68 @@ class DMakGuiApp:
         )
         self.preview_label.pack(fill="both", expand=True)
 
+        log_group = ttk.LabelFrame(container, text="Log", padding=8)
+        log_group.pack(fill="both", expand=True, pady=(10, 0))
+
+        log_scrollbar = ttk.Scrollbar(log_group, orient="vertical")
+        log_scrollbar.pack(side="right", fill="y")
+
+        self.log_text = tk.Text(
+            log_group,
+            height=10,
+            bg="#0f172a",
+            fg="#e2e8f0",
+            insertbackground="#e2e8f0",
+            yscrollcommand=log_scrollbar.set,
+            state="disabled",
+        )
+        self.log_text.pack(side="left", fill="both", expand=True)
+        log_scrollbar.configure(command=self.log_text.yview)
+
         self._set_status("stopped", "Status: stopped")
+        self._append_log("INFO", "GUI initialized")
 
     def _set_status(self, level: str, message: str) -> None:
         color = self.STATUS_COLORS.get(level, self.STATUS_COLORS["error"])
         self.status_level = level
         self.status_text.set(message)
         self.status_indicator.itemconfigure(self.status_dot, fill=color)
+
+    def _append_log(self, level: str, message: str) -> None:
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        line = f"[{timestamp}] [{level}] {message}\n"
+
+        self.log_text.configure(state="normal")
+        self.log_text.insert("end", line)
+
+        total_lines = int(self.log_text.index("end-1c").split(".")[0])
+        if total_lines > self.max_log_lines:
+            delete_until = f"{total_lines - self.max_log_lines + 1}.0"
+            self.log_text.delete("1.0", delete_until)
+
+        self.log_text.see("end")
+        self.log_text.configure(state="disabled")
+
+    def _drain_log_queue(self) -> None:
+        while True:
+            try:
+                line = self.log_queue.get_nowait()
+            except queue.Empty:
+                break
+
+            stripped = line.rstrip()
+            if stripped:
+                self._append_log("MON", stripped)
+
+    def _read_process_output(self, proc: subprocess.Popen) -> None:
+        if proc.stdout is None:
+            return
+
+        try:
+            for line in proc.stdout:
+                self.log_queue.put(line)
+        except Exception as exc:
+            self.log_queue.put(f"[reader-error] {exc}")
 
     def refresh_cameras(self, initial: bool = False) -> None:
         self.cameras = discover_cameras(max_devices=10)
@@ -174,6 +234,7 @@ class DMakGuiApp:
             self._set_status("no-camera", "Status: no camera found")
             self._stop_preview()
             self._set_preview_placeholder("No camera preview")
+            self._append_log("WARN", "No camera device detected")
             if not initial:
                 messagebox.showwarning("No camera", "No available camera device was found.")
             return
@@ -195,6 +256,7 @@ class DMakGuiApp:
             self.camera_combo.current(default_index)
 
         self._restart_preview()
+        self._append_log("INFO", f"Camera list refreshed ({len(self.cameras)} found)")
 
     def _set_preview_placeholder(self, message: str) -> None:
         self.preview_photo = None
@@ -224,14 +286,17 @@ class DMakGuiApp:
         if not cap.isOpened():
             cap.release()
             self._set_preview_placeholder(f"Failed to open camera {camera_index}")
+            self._append_log("ERROR", f"Failed to open camera {camera_index}")
             return
 
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         self.preview_cap = cap
+        self._append_log("INFO", f"Preview started on camera {camera_index}")
         self._update_preview_frame()
 
     def _stop_preview(self) -> None:
         if self.preview_cap is not None:
+            self._append_log("INFO", "Preview stopped")
             self.preview_cap.release()
             self.preview_cap = None
 
@@ -281,10 +346,14 @@ class DMakGuiApp:
 
         if self.process and self.process.poll() is None:
             self._set_status("restarting", "Status: restarting monitor with new camera...")
+            self._append_log("INFO", "Restarting monitor due to camera change")
             self.stop_monitoring()
             self.start_monitoring()
         else:
             self._set_status("saved", "Status: camera selection saved")
+            idx = self._selected_camera_index()
+            if idx is not None:
+                self._append_log("INFO", f"Camera selection saved: {idx}")
 
         self._restart_preview()
 
@@ -297,6 +366,7 @@ class DMakGuiApp:
     def start_monitoring(self) -> None:
         if self.process and self.process.poll() is None:
             self._set_status("running", "Status: already running")
+            self._append_log("INFO", "Monitor is already running")
             return
 
         if not self._save_selected_camera_to_config():
@@ -309,26 +379,41 @@ class DMakGuiApp:
             command = [sys.executable, self.monitor_script_path]
         else:
             self._set_status("error", "Status: launch target is missing")
+            self._append_log("ERROR", "Monitor launch target not found")
             messagebox.showerror(
                 "Launch error",
                 f"Monitor target not found: {self.monitor_exe_path} or {self.monitor_script_path}",
             )
             return
 
+        env = os.environ.copy()
+        env["PYTHONUNBUFFERED"] = "1"
+
         self.process = subprocess.Popen(
             command,
             cwd=self.base_dir,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
             creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0,
         )
 
+        threading.Thread(target=self._read_process_output, args=(self.process,), daemon=True).start()
+
         self.toggle_button.configure(text="Stop monitoring")
         self._set_status("running", f"Status: running (PID {self.process.pid})")
+        self._append_log("INFO", f"Monitor started (PID {self.process.pid})")
 
     def stop_monitoring(self) -> None:
         if not self.process or self.process.poll() is not None:
             self.process = None
             self.toggle_button.configure(text="Start monitoring")
             self._set_status("stopped", "Status: stopped")
+            self._append_log("INFO", "Monitor is already stopped")
             return
 
         proc = self.process
@@ -340,19 +425,23 @@ class DMakGuiApp:
                 proc.terminate()
                 proc.wait(timeout=3)
         except Exception:
+            self._append_log("WARN", "Graceful stop failed, forcing process kill")
             proc.kill()
             proc.wait(timeout=3)
 
         self.process = None
         self.toggle_button.configure(text="Start monitoring")
         self._set_status("stopped", "Status: stopped")
+        self._append_log("INFO", "Monitor stopped")
 
     def _poll_process(self) -> None:
+        self._drain_log_queue()
         if self.process and self.process.poll() is not None:
             code = self.process.returncode
             self.process = None
             self.toggle_button.configure(text="Start monitoring")
             self._set_status("stopped", f"Status: stopped (exit {code})")
+            self._append_log("INFO", f"Monitor exited with code {code}")
         self.root.after(1000, self._poll_process)
 
     def _on_close(self) -> None:
