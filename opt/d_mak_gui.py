@@ -46,6 +46,15 @@ def discover_cameras(max_devices: int = 10) -> List[Tuple[int, str]]:
 
 
 class DMakGuiApp:
+    STATUS_COLORS = {
+        "stopped": "#6c757d",
+        "running": "#198754",
+        "restarting": "#fd7e14",
+        "error": "#dc3545",
+        "no-camera": "#dc3545",
+        "saved": "#0d6efd",
+    }
+
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title("d-mak launcher")
@@ -67,6 +76,7 @@ class DMakGuiApp:
 
         self.selected_camera = tk.StringVar()
         self.status_text = tk.StringVar(value="Status: stopped")
+        self.status_level = "stopped"
 
         self._build_ui()
         self.refresh_cameras(initial=True)
@@ -113,21 +123,35 @@ class DMakGuiApp:
         stop_button = ttk.Button(action_row, text="Stop", command=self.stop_monitoring)
         stop_button.pack(side="left", padx=(8, 0))
 
-        status_label = ttk.Label(container, textvariable=self.status_text)
-        status_label.pack(anchor="w")
+        status_row = ttk.Frame(container)
+        status_row.pack(fill="x")
+
+        self.status_indicator = tk.Canvas(status_row, width=16, height=16, highlightthickness=0)
+        self.status_indicator.pack(side="left", padx=(0, 8))
+        self.status_dot = self.status_indicator.create_oval(2, 2, 14, 14, fill=self.STATUS_COLORS["stopped"], outline="")
+
+        status_label = ttk.Label(status_row, textvariable=self.status_text)
+        status_label.pack(side="left")
 
         info = ttk.Label(
             container,
             text="Tip: Press 'q' in the OpenCV window to stop monitoring from the monitor side.",
         )
         info.pack(anchor="w", pady=(8, 0))
+        self._set_status("stopped", "Status: stopped")
+
+    def _set_status(self, level: str, message: str) -> None:
+        color = self.STATUS_COLORS.get(level, self.STATUS_COLORS["error"])
+        self.status_level = level
+        self.status_text.set(message)
+        self.status_indicator.itemconfigure(self.status_dot, fill=color)
 
     def refresh_cameras(self, initial: bool = False) -> None:
         self.cameras = discover_cameras(max_devices=10)
         if not self.cameras:
             self.camera_combo["values"] = []
             self.selected_camera.set("")
-            self.status_text.set("Status: no camera found")
+            self._set_status("no-camera", "Status: no camera found")
             if not initial:
                 messagebox.showwarning("No camera", "No available camera device was found.")
             return
@@ -170,11 +194,11 @@ class DMakGuiApp:
             return
 
         if self.process and self.process.poll() is None:
-            self.status_text.set("Status: restarting monitor with new camera...")
+            self._set_status("restarting", "Status: restarting monitor with new camera...")
             self.stop_monitoring()
             self.start_monitoring()
         else:
-            self.status_text.set("Status: camera selection saved")
+            self._set_status("saved", "Status: camera selection saved")
 
     def toggle_monitoring(self) -> None:
         if self.process and self.process.poll() is None:
@@ -184,7 +208,7 @@ class DMakGuiApp:
 
     def start_monitoring(self) -> None:
         if self.process and self.process.poll() is None:
-            self.status_text.set("Status: already running")
+            self._set_status("running", "Status: already running")
             return
 
         if not self._save_selected_camera_to_config():
@@ -196,6 +220,7 @@ class DMakGuiApp:
         elif os.path.exists(self.monitor_script_path):
             command = [sys.executable, self.monitor_script_path]
         else:
+            self._set_status("error", "Status: launch target is missing")
             messagebox.showerror(
                 "Launch error",
                 f"Monitor target not found: {self.monitor_exe_path} or {self.monitor_script_path}",
@@ -209,13 +234,13 @@ class DMakGuiApp:
         )
 
         self.toggle_button.configure(text="Stop monitoring")
-        self.status_text.set(f"Status: running (PID {self.process.pid})")
+        self._set_status("running", f"Status: running (PID {self.process.pid})")
 
     def stop_monitoring(self) -> None:
         if not self.process or self.process.poll() is not None:
             self.process = None
             self.toggle_button.configure(text="Start monitoring")
-            self.status_text.set("Status: stopped")
+            self._set_status("stopped", "Status: stopped")
             return
 
         proc = self.process
@@ -232,14 +257,14 @@ class DMakGuiApp:
 
         self.process = None
         self.toggle_button.configure(text="Start monitoring")
-        self.status_text.set("Status: stopped")
+        self._set_status("stopped", "Status: stopped")
 
     def _poll_process(self) -> None:
         if self.process and self.process.poll() is not None:
             code = self.process.returncode
             self.process = None
             self.toggle_button.configure(text="Start monitoring")
-            self.status_text.set(f"Status: stopped (exit {code})")
+            self._set_status("stopped", f"Status: stopped (exit {code})")
         self.root.after(1000, self._poll_process)
 
     def _on_close(self) -> None:
