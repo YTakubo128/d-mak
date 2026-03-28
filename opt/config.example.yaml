@@ -2,6 +2,16 @@ camera:
   resolution: [1280, 720]  # 720p (ユーザーのカメラに合わせて調整可)
   fps: 30                   # フレームレート
   device_number: 0          # カメラデバイス番号（複数カメラがある場合は1, 2...）
+  source: "usb"             # "usb" または "tapo"（Tapo C220使用時は "tapo"）
+
+# TP-Link Tapo C220 IPカメラ設定
+# camera.source を "tapo" にすると RTSPストリームをカメラとして使用します
+tapo:
+  enabled: false
+  ip: "192.168.1.100"        # TapoカメラのIPアドレス
+  username: "admin"          # Tapoアプリで設定したユーザー名
+  password: "your_password"  # Tapoアプリで設定したパスワード
+  stream: "stream1"          # stream1（高画質）または stream2（低画質）
 
 gesture:
   confirmation_frames: 10      # 10フレーム連続で確定

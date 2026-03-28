@@ -5,7 +5,7 @@ from tkinter import messagebox
 from tkinter import ttk
 from typing import List, Tuple
 
-from gui.camera_service import CameraPreview, discover_cameras
+from gui.camera_service import CameraPreview, discover_cameras, build_tapo_rtsp_url
 from gui.config_store import load_config, save_config
 from gui.log_panel import LogPanel
 from gui.monitor_runner import MonitorRunner
@@ -46,7 +46,7 @@ class DMakGuiApp:
         self.monitor_script_path = os.path.join(self.base_dir, "d-mak.py")
 
         self.config = load_config(self.config_path)
-        self.cameras: List[Tuple[int, str]] = []
+        self.cameras: List[Tuple[int | str, str]] = []
         self.monitor = MonitorRunner(self.base_dir, self.monitor_exe_path, self.monitor_script_path)
         self.preview: CameraPreview | None = None
         self.log_panel: LogPanel | None = None
@@ -99,6 +99,50 @@ class DMakGuiApp:
 
         refresh_button = ttk.Button(camera_row, text="Refresh", command=self.refresh_cameras)
         refresh_button.pack(side="left")
+
+        # ── Tapo C220 設定 ──────────────────────────────────────────
+        tapo_group = ttk.LabelFrame(container, text="Tapo C220 設定", padding=(8, 4))
+        tapo_group.pack(fill="x", pady=(0, 8))
+
+        tapo_cfg = self.config.get("tapo", {})
+
+        self._tapo_enabled = tk.BooleanVar(value=bool(tapo_cfg.get("enabled", False)))
+        tapo_enable_cb = ttk.Checkbutton(
+            tapo_group, text="Tapo C220 を使用する", variable=self._tapo_enabled,
+            command=self._on_tapo_enable_toggled,
+        )
+        tapo_enable_cb.grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 4))
+
+        ttk.Label(tapo_group, text="IP アドレス:").grid(row=1, column=0, sticky="w", padx=(0, 4))
+        self._tapo_ip = tk.StringVar(value=tapo_cfg.get("ip", "192.168.1.100"))
+        ttk.Entry(tapo_group, textvariable=self._tapo_ip, width=18).grid(row=1, column=1, sticky="w", padx=(0, 12))
+
+        ttk.Label(tapo_group, text="ユーザー名:").grid(row=1, column=2, sticky="w", padx=(0, 4))
+        self._tapo_user = tk.StringVar(value=tapo_cfg.get("username", "admin"))
+        ttk.Entry(tapo_group, textvariable=self._tapo_user, width=14).grid(row=1, column=3, sticky="w")
+
+        ttk.Label(tapo_group, text="パスワード:").grid(row=2, column=0, sticky="w", padx=(0, 4), pady=(4, 0))
+        self._tapo_pass = tk.StringVar(value=tapo_cfg.get("password", ""))
+        ttk.Entry(tapo_group, textvariable=self._tapo_pass, width=18, show="*").grid(
+            row=2, column=1, sticky="w", padx=(0, 12), pady=(4, 0)
+        )
+
+        ttk.Label(tapo_group, text="ストリーム:").grid(row=2, column=2, sticky="w", padx=(0, 4), pady=(4, 0))
+        self._tapo_stream = tk.StringVar(value=tapo_cfg.get("stream", "stream1"))
+        stream_combo = ttk.Combobox(
+            tapo_group, textvariable=self._tapo_stream,
+            values=["stream1", "stream2"], state="readonly", width=10,
+        )
+        stream_combo.grid(row=2, column=3, sticky="w", pady=(4, 0))
+
+        tapo_save_btn = ttk.Button(tapo_group, text="保存", command=self._save_tapo_config)
+        tapo_save_btn.grid(row=3, column=3, sticky="e", pady=(6, 0))
+
+        self._tapo_status_var = tk.StringVar(value="")
+        ttk.Label(tapo_group, textvariable=self._tapo_status_var, foreground="#198754").grid(
+            row=3, column=0, columnspan=3, sticky="w", pady=(6, 0)
+        )
+        # ────────────────────────────────────────────────────────────
 
         action_row = ttk.Frame(container)
         action_row.pack(fill="x", pady=(0, 12))
@@ -335,8 +379,55 @@ class DMakGuiApp:
                 # _append_log 内で _process_log_event も呼ばれる
                 self._append_log("MON", stripped)
 
+    # ── Tapo C220 関連メソッド ────────────────────────────────────
+
+    def _tapo_rtsp_url(self) -> str | None:
+        """設定から RTSP URL を生成。必須フィールドが空なら None を返す。"""
+        cfg = self.config.get("tapo", {})
+        ip = cfg.get("ip", "").strip()
+        user = cfg.get("username", "").strip()
+        pw = cfg.get("password", "").strip()
+        stream = cfg.get("stream", "stream1")
+        if not ip or not user or not pw:
+            return None
+        return build_tapo_rtsp_url(ip, user, pw, stream)
+
+    def _on_tapo_enable_toggled(self) -> None:
+        """Tapoチェックボックス変更時: 設定を保存してカメラ一覧を更新"""
+        self._save_tapo_config(silent=True)
+        self.refresh_cameras()
+
+    def _save_tapo_config(self, silent: bool = False) -> None:
+        """Tapo設定をconfig.yamlに保存してカメラ一覧を更新"""
+        tapo_cfg = {
+            "enabled": bool(self._tapo_enabled.get()),
+            "ip": self._tapo_ip.get().strip(),
+            "username": self._tapo_user.get().strip(),
+            "password": self._tapo_pass.get(),
+            "stream": self._tapo_stream.get(),
+        }
+        self.config["tapo"] = tapo_cfg
+        save_config(self.config_path, self.config)
+        if not silent:
+            self._tapo_status_var.set("✓ 保存しました")
+            self.root.after(3000, lambda: self._tapo_status_var.set(""))
+            self._append_log("INFO", f"Tapo config saved (enabled={tapo_cfg['enabled']}, ip={tapo_cfg['ip']})")
+            self.refresh_cameras()
+
+    # ── カメラ関連メソッド ──────────────────────────────────────
+
     def refresh_cameras(self, initial: bool = False) -> None:
-        self.cameras = discover_cameras(max_devices=10)
+        usb_cameras = discover_cameras(max_devices=10)
+        self.cameras = list(usb_cameras)
+
+        # Tapo C220 が有効なら一覧に追加
+        tapo_cfg = self.config.get("tapo", {})
+        if tapo_cfg.get("enabled") and tapo_cfg.get("ip"):
+            ip = tapo_cfg["ip"]
+            stream = tapo_cfg.get("stream", "stream1")
+            tapo_label = f"Tapo C220  {ip} ({stream})"
+            self.cameras.append(("tapo", tapo_label))
+
         if not self.cameras:
             self.camera_combo["values"] = []
             self.selected_camera.set("")
@@ -352,40 +443,58 @@ class DMakGuiApp:
         labels = [label for _, label in self.cameras]
         self.camera_combo["values"] = labels
 
-        config_camera = self.config.get("camera", {}).get("device_number", 0)
-        default_index = 0
-        for idx, (cam_idx, _) in enumerate(self.cameras):
-            if cam_idx == config_camera:
-                default_index = idx
-                break
-
+        # 既存選択を維持、なければ config の値を選択
         current_label = self.selected_camera.get()
         if current_label in labels:
             self.camera_combo.current(labels.index(current_label))
         else:
-            self.camera_combo.current(default_index)
+            # config.source が "tapo" なら Tapo を優先選択
+            config_source = self.config.get("camera", {}).get("source", "usb")
+            if config_source == "tapo" and any(k == "tapo" for k, _ in self.cameras):
+                tapo_idx = next(i for i, (k, _) in enumerate(self.cameras) if k == "tapo")
+                self.camera_combo.current(tapo_idx)
+            else:
+                config_camera = self.config.get("camera", {}).get("device_number", 0)
+                default_index = 0
+                for idx, (cam_key, _) in enumerate(self.cameras):
+                    if cam_key == config_camera:
+                        default_index = idx
+                        break
+                self.camera_combo.current(default_index)
 
         self._restart_preview()
-        self._append_log("INFO", f"Camera list refreshed ({len(self.cameras)} found)")
+        usb_count = len(usb_cameras)
+        tapo_note = " + Tapo C220" if tapo_cfg.get("enabled") else ""
+        self._append_log("INFO", f"Camera list refreshed ({usb_count} USB{tapo_note})")
 
     def _restart_preview(self) -> None:
         if self.preview is not None:
-            self.preview.start(self._selected_camera_index())
+            self.preview.start(self._selected_camera_source())
 
-    def _selected_camera_index(self) -> int | None:
+    def _selected_camera_source(self) -> int | str | None:
+        """選択中カメラの source を返す（USB: int、Tapo: RTSPのURL文字列）"""
         label = self.selected_camera.get()
-        for idx, text in self.cameras:
+        for key, text in self.cameras:
             if text == label:
-                return idx
+                if key == "tapo":
+                    return self._tapo_rtsp_url()
+                return key  # int
         return None
 
     def _save_selected_camera_to_config(self) -> bool:
-        camera_index = self._selected_camera_index()
-        if camera_index is None:
+        label = self.selected_camera.get()
+        cam_entry = next(((k, t) for k, t in self.cameras if t == label), None)
+        if cam_entry is None:
             messagebox.showerror("Camera", "Please select a valid camera.")
             return False
 
-        self.config.setdefault("camera", {})["device_number"] = camera_index
+        key, _ = cam_entry
+        cam_cfg = self.config.setdefault("camera", {})
+        if key == "tapo":
+            cam_cfg["source"] = "tapo"
+        else:
+            cam_cfg["source"] = "usb"
+            cam_cfg["device_number"] = key
         save_config(self.config_path, self.config)
         return True
 
@@ -400,9 +509,10 @@ class DMakGuiApp:
             self.start_monitoring()
         else:
             self._set_status("saved", "Status: camera selection saved")
-            idx = self._selected_camera_index()
-            if idx is not None:
-                self._append_log("INFO", f"Camera selection saved: {idx}")
+            src = self._selected_camera_source()
+            if src is not None:
+                label = "Tapo C220 (RTSP)" if isinstance(src, str) else f"camera {src}"
+                self._append_log("INFO", f"Camera selection saved: {label}")
 
         self._restart_preview()
 

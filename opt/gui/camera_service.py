@@ -25,8 +25,14 @@ def try_open_camera(index: int):
     return cap
 
 
-def discover_cameras(max_devices: int = 10) -> List[Tuple[int, str]]:
-    cameras: List[Tuple[int, str]] = []
+def build_tapo_rtsp_url(ip: str, username: str, password: str, stream: str = "stream1") -> str:
+    """Tapo C220 の RTSP URL を生成する"""
+    return f"rtsp://{username}:{password}@{ip}/{stream}"
+
+
+def discover_cameras(max_devices: int = 10) -> List[Tuple[int | str, str]]:
+    """USBカメラを列挙して返す。Tapoカメラは GUI 側で別途追加する。"""
+    cameras: List[Tuple[int | str, str]] = []
     for i in range(max_devices):
         cap = try_open_camera(i)
         if cap.isOpened():
@@ -96,22 +102,31 @@ class CameraPreview:
         except Exception:
             return None
 
-    def start(self, camera_index: int | None) -> None:
+    def start(self, source: int | str | None) -> None:
+        """カメラを起動する。source は USB カメラ番号 (int) または RTSP URL (str)。"""
         self.stop()
-        if camera_index is None:
+        if source is None:
             self.set_placeholder("Select a camera")
             return
 
-        cap = try_open_camera(camera_index)
+        if isinstance(source, str):
+            # RTSP ストリーム（Tapo C220 など）
+            cap = cv2.VideoCapture(source)
+            label = "RTSP stream"
+        else:
+            # USB カメラ
+            cap = try_open_camera(source)
+            label = f"camera {source}"
+
         if not cap.isOpened():
             cap.release()
-            self.set_placeholder(f"Failed to open camera {camera_index}")
-            self.log("ERROR", f"Failed to open camera {camera_index}")
+            self.set_placeholder(f"Failed to open {label}")
+            self.log("ERROR", f"Failed to open {label}")
             return
 
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         self.cap = cap
-        self.log("INFO", f"Preview started on camera {camera_index}")
+        self.log("INFO", f"Preview started on {label}")
         self._update_frame()
 
     def stop(self) -> None:
