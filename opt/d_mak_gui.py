@@ -119,13 +119,19 @@ class DMakGuiApp:
 
         ttk.Label(tapo_group, text="ユーザー名:").grid(row=1, column=2, sticky="w", padx=(0, 4))
         self._tapo_user = tk.StringVar(value=tapo_cfg.get("username", "admin"))
-        ttk.Entry(tapo_group, textvariable=self._tapo_user, width=14).grid(row=1, column=3, sticky="w")
+        ttk.Entry(tapo_group, textvariable=self._tapo_user, width=20).grid(row=1, column=3, sticky="w")
 
         ttk.Label(tapo_group, text="パスワード:").grid(row=2, column=0, sticky="w", padx=(0, 4), pady=(4, 0))
         self._tapo_pass = tk.StringVar(value=tapo_cfg.get("password", ""))
-        ttk.Entry(tapo_group, textvariable=self._tapo_pass, width=18, show="*").grid(
-            row=2, column=1, sticky="w", padx=(0, 12), pady=(4, 0)
-        )
+        self._tapo_pass_show = tk.BooleanVar(value=False)
+        pass_frame = ttk.Frame(tapo_group)
+        pass_frame.grid(row=2, column=1, sticky="w", padx=(0, 12), pady=(4, 0))
+        self._tapo_pass_entry = ttk.Entry(pass_frame, textvariable=self._tapo_pass, width=15, show="*")
+        self._tapo_pass_entry.pack(side="left")
+        ttk.Button(
+            pass_frame, text="👁", width=3,
+            command=self._toggle_tapo_pass_visibility,
+        ).pack(side="left", padx=(2, 0))
 
         ttk.Label(tapo_group, text="ストリーム:").grid(row=2, column=2, sticky="w", padx=(0, 4), pady=(4, 0))
         self._tapo_stream = tk.StringVar(value=tapo_cfg.get("stream", "stream1"))
@@ -135,13 +141,17 @@ class DMakGuiApp:
         )
         stream_combo.grid(row=2, column=3, sticky="w", pady=(4, 0))
 
-        tapo_save_btn = ttk.Button(tapo_group, text="保存", command=self._save_tapo_config)
-        tapo_save_btn.grid(row=3, column=3, sticky="e", pady=(6, 0))
+        # 保存・接続テストボタン行
+        btn_frame = ttk.Frame(tapo_group)
+        btn_frame.grid(row=3, column=0, columnspan=4, sticky="e", pady=(8, 0))
+        ttk.Button(btn_frame, text="接続テスト", command=self._test_tapo_connection).pack(side="left", padx=(0, 6))
+        ttk.Button(btn_frame, text="保存", command=self._save_tapo_config).pack(side="left")
 
         self._tapo_status_var = tk.StringVar(value="")
-        ttk.Label(tapo_group, textvariable=self._tapo_status_var, foreground="#198754").grid(
-            row=3, column=0, columnspan=3, sticky="w", pady=(6, 0)
+        self._tapo_status_label = ttk.Label(
+            tapo_group, textvariable=self._tapo_status_var, foreground="#198754"
         )
+        self._tapo_status_label.grid(row=4, column=0, columnspan=4, sticky="w", pady=(4, 0))
         # ────────────────────────────────────────────────────────────
 
         action_row = ttk.Frame(container)
@@ -380,6 +390,56 @@ class DMakGuiApp:
                 self._append_log("MON", stripped)
 
     # ── Tapo C220 関連メソッド ────────────────────────────────────
+
+    def _toggle_tapo_pass_visibility(self) -> None:
+        """パスワードの表示/非表示を切り替える"""
+        self._tapo_pass_show.set(not self._tapo_pass_show.get())
+        self._tapo_pass_entry.configure(show="" if self._tapo_pass_show.get() else "*")
+
+    def _test_tapo_connection(self) -> None:
+        """RTSPストリームへの接続テストをバックグラウンドで実行する"""
+        import threading
+        url = self._build_tapo_rtsp_url_from_fields()
+        if url is None:
+            self._set_tapo_status("⚠ IP・ユーザー名・パスワードを入力してください", "#fd7e14")
+            return
+        self._set_tapo_status("🔄 接続テスト中...", "#0099ff")
+        self.toggle_button.configure(state="disabled")
+
+        def _run():
+            import cv2 as _cv2
+            cap = _cv2.VideoCapture(url)
+            ok = cap.isOpened()
+            ret = False
+            if ok:
+                ret, _ = cap.read()
+            cap.release()
+            self.root.after(0, lambda: self._on_tapo_test_done(ok and ret))
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _on_tapo_test_done(self, success: bool) -> None:
+        self.toggle_button.configure(state="normal")
+        if success:
+            self._set_tapo_status("✓ 接続成功", "#198754")
+            self._append_log("INFO", "Tapo connection test: success")
+        else:
+            self._set_tapo_status("✗ 接続失敗（IP・認証情報・ネットワークを確認）", "#dc3545")
+            self._append_log("WARN", "Tapo connection test: failed")
+
+    def _set_tapo_status(self, msg: str, color: str = "#198754") -> None:
+        self._tapo_status_var.set(msg)
+        self._tapo_status_label.configure(foreground=color)
+
+    def _build_tapo_rtsp_url_from_fields(self) -> str | None:
+        """GUIフィールドの現在値から RTSP URL を生成（未保存の値も使用）"""
+        ip = self._tapo_ip.get().strip()
+        user = self._tapo_user.get().strip()
+        pw = self._tapo_pass.get()
+        stream = self._tapo_stream.get()
+        if not ip or not user or not pw:
+            return None
+        return build_tapo_rtsp_url(ip, user, pw, stream)
 
     def _tapo_rtsp_url(self) -> str | None:
         """設定から RTSP URL を生成。必須フィールドが空なら None を返す。"""

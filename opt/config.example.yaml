@@ -9,8 +9,8 @@ camera:
 tapo:
   enabled: false
   ip: "192.168.1.100"        # TapoカメラのIPアドレス
-  username: "admin"          # Tapoアプリで設定したユーザー名
-  password: "your_password"  # Tapoアプリで設定したパスワード
+  username: "admin"          # Tapoアプリ「デバイスアカウント」のユーザー名
+  password: "your_password"  # Tapoアプリ「デバイスアカウント」のパスワード
   stream: "stream1"          # stream1（高画質）または stream2（低画質）
 
 gesture:
