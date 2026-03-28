@@ -24,7 +24,7 @@ class LogPanel:
 
     def append(self, level: str, message: str) -> None:
         timestamp = datetime.now().strftime("%H:%M:%S")
-        line = f"[{timestamp}] [{level}] {message}\\n"
+        line = f"[{timestamp}] [{level}] {message}\n"
 
         self.log_text.configure(state="normal")
         self.log_text.insert("end", line)

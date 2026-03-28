@@ -1,4 +1,5 @@
 import cv2
+import sys
 import yaml
 import logging
 import time
@@ -69,8 +70,8 @@ class HandGestureApp:
         self.executor = AsyncExecutor()
         self.controller = SwitchBotController(self.token, self.secret, self.config, logger) if self.token and self.secret else None
         
-        # カメラを初期化
-        self.cap = cv2.VideoCapture(self.camera_device)
+        # カメラを初期化（Windows は CAP_DSHOW でドライバと一致させる）
+        self.cap = self._open_camera(self.camera_device)
         self._setup_camera()
         
         # デバイス設定をロード（gesture_actionsで参照できるようキーを作成）
@@ -230,6 +231,17 @@ class HandGestureApp:
 
         return actions
     
+    def _open_camera(self, device: int):
+        """カメラを開く（Windows は CAP_DSHOW を使用）"""
+        if sys.platform == "win32":
+            cap = cv2.VideoCapture(device, cv2.CAP_DSHOW)
+            if not cap.isOpened():
+                cap.release()
+                cap = cv2.VideoCapture(device)
+        else:
+            cap = cv2.VideoCapture(device)
+        return cap
+
     def _setup_camera(self):
         """カメラをセットアップ"""
         if not self.cap.isOpened():
@@ -334,8 +346,16 @@ class HandGestureApp:
                 ret, frame = self.cap.read()
                 if not ret:
                     logger.warning("Failed to read frame")
-                    self.error_handler.handle_camera_error(Exception("Frame read failed"))
-                    break
+                    action = self.error_handler.handle_camera_error(Exception("Frame read failed"))
+                    if action == "manual_intervention":
+                        logger.critical("Too many consecutive errors. Exiting.")
+                        break
+                    # カメラを再接続して再試行
+                    logger.info("Reconnecting camera...")
+                    self.cap.release()
+                    self.cap = self._open_camera(self.camera_device)
+                    self._setup_camera()
+                    continue
                 
                 frame_count += 1
                 

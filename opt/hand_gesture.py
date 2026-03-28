@@ -52,30 +52,13 @@ class HandGestureDetector:
         result += HandGestureDetector.calc_angle(p2, p3, p4)
         return result
     
-    def detect_pose(self, frame) -> int:
+    def _classify_from_landmarks(self, hand_landmarks) -> int:
         """
-        フレームからジェスチャを検出
-        
-        Args:
-            frame: OpenCV フレーム (BGR形式)
-        
+        ランドマークデータからジェスチャIDを判定（内部共通ロジック）
+
         Returns:
-            ジェスチャID: 0=無検出, 1=パー, 2=グー, 3=ワン, 4=OKサイン（起動トリガー）
+            ジェスチャID: 0=無検出, 1=パー, 2=グー, 3=ワン, 4=OKサイン
         """
-        import cv2
-        
-        # BGR to RGB変換
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        
-        # 手を検出
-        results = self.hands.process(frame_rgb)
-        
-        if not results.multi_hand_landmarks:
-            return 0  # 無検出
-        
-        # 最初の手のランドマークを取得
-        hand_landmarks = results.multi_hand_landmarks[0]
-        
         # 各指の状態を判定
         thumb_is_open = self.calc_finger_angle(
             hand_landmarks.landmark[0],
@@ -147,7 +130,55 @@ class HandGestureDetector:
             return 3  # ワン
         
         return 0  # その他
-    
+
+    def detect_pose(self, frame) -> int:
+        """
+        フレームからジェスチャを検出
+
+        Args:
+            frame: OpenCV フレーム (BGR形式)
+
+        Returns:
+            ジェスチャID: 0=無検出, 1=パー, 2=グー, 3=ワン, 4=OKサイン（起動トリガー）
+        """
+        import cv2
+
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        results = self.hands.process(frame_rgb)
+
+        if not results.multi_hand_landmarks:
+            return 0
+
+        return self._classify_from_landmarks(results.multi_hand_landmarks[0])
+
+    def detect_and_draw(self, frame):
+        """
+        ジェスチャー検出とランドマーク描画を1回のMediaPipe処理で行う（GUI overlay用）
+
+        Args:
+            frame: OpenCV フレーム (BGR形式)
+
+        Returns:
+            (gesture_id: int, frame: ndarray)  ランドマーク描画済みフレームを返す
+        """
+        import cv2
+
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        results = self.hands.process(frame_rgb)
+
+        gesture_id = 0
+        if results.multi_hand_landmarks:
+            mp_drawing = mp.solutions.drawing_utils
+            for hand_landmarks in results.multi_hand_landmarks:
+                mp_drawing.draw_landmarks(
+                    frame,
+                    hand_landmarks,
+                    self.mp_hands.HAND_CONNECTIONS,
+                )
+            gesture_id = self._classify_from_landmarks(results.multi_hand_landmarks[0])
+
+        return gesture_id, frame
+
     def visualize_landmarks(self, frame, draw: bool = True):
         """
         ランドマークをフレーム上に描画

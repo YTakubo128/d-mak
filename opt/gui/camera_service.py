@@ -1,8 +1,20 @@
 import base64
-from typing import Callable, List, Tuple
+import os
+import sys
+from typing import Callable, List, Optional, Tuple
 
 import cv2
 import tkinter as tk
+
+# HandGestureDetector のインポート（gui/ の親ディレクトリ = opt/ から）
+try:
+    _opt_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if _opt_dir not in sys.path:
+        sys.path.insert(0, _opt_dir)
+    from hand_gesture import HandGestureDetector as _HandGestureDetector
+    _GESTURE_AVAILABLE = True
+except Exception:
+    _GESTURE_AVAILABLE = False
 
 
 def try_open_camera(index: int):
@@ -35,6 +47,8 @@ class CameraPreview:
         width: int,
         height: int,
         log_callback: Callable[[str, str], None],
+        gesture_overlay: bool = False,
+        gesture_callback: Optional[Callable[[int], None]] = None,
     ):
         self.root = root
         self.label = label
@@ -47,21 +61,34 @@ class CameraPreview:
         self.error_reported = False
         self.after_id = None
 
+        # ジェスチャーオーバーレイ
+        self._gesture_detector = None
+        self._last_gesture_id: int = 0
+        self.gesture_callback = gesture_callback
+
+        if gesture_overlay and _GESTURE_AVAILABLE:
+            try:
+                self._gesture_detector = _HandGestureDetector()
+            except Exception as e:
+                log_callback("WARN", f"Gesture overlay unavailable: {e}")
+
     def set_placeholder(self, message: str) -> None:
         self.photo = None
         self.label.configure(image="", text=message)
 
     def _frame_to_photo(self, frame) -> tk.PhotoImage | None:
         try:
-            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            resized = cv2.resize(rgb, (self.width, self.height), interpolation=cv2.INTER_AREA)
+            resized = cv2.resize(frame, (self.width, self.height), interpolation=cv2.INTER_AREA)
 
+            # imencode(".png") handles BGR→RGB internally, so pass BGR frame directly
             ok_png, png_buf = cv2.imencode(".png", resized)
             if ok_png:
                 png_base64 = base64.b64encode(png_buf.tobytes()).decode("ascii")
                 return tk.PhotoImage(data=png_base64)
 
-            ok_ppm, ppm_buf = cv2.imencode(".ppm", resized)
+            # PPM fallback: convert to RGB since PPM is raw bytes (no auto-conversion)
+            rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
+            ok_ppm, ppm_buf = cv2.imencode(".ppm", rgb)
             if ok_ppm:
                 ppm_base64 = base64.b64encode(ppm_buf.tobytes()).decode("ascii")
                 return tk.PhotoImage(data=ppm_base64, format="PPM")
@@ -106,6 +133,17 @@ class CameraPreview:
             self.set_placeholder("Preview not available")
             self.after_id = self.root.after(200, self._update_frame)
             return
+
+        # ジェスチャー検出とランドマーク描画（1回のMediaPipe処理）
+        if self._gesture_detector is not None:
+            try:
+                gesture_id, frame = self._gesture_detector.detect_and_draw(frame)
+                self._last_gesture_id = gesture_id
+                # 毎フレーム呼ぶ（エンジンの状態機械はフレーム単位で動く）
+                if self.gesture_callback:
+                    self.gesture_callback(gesture_id)
+            except Exception:
+                pass  # オーバーレイ失敗時もプレビューは継続
 
         photo = self._frame_to_photo(frame)
         if photo is None:
